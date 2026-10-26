@@ -1,0 +1,72 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Unzip project (if only a .zip was uploaded)
+        run: |
+          if [ -z "$(find . \( -name settings.gradle.kts -o -name settings.gradle \) -not -path './.git/*' | head -n 1)" ]; then
+            ZIP=$(find . -name '*.zip' -not -path './.git/*' | head -n 1)
+            if [ -n "$ZIP" ]; then
+              echo "Unzipping: $ZIP"
+              mkdir -p unpacked
+              unzip -o -q "$ZIP" -d unpacked
+            fi
+          fi
+
+      - name: Find Android project
+        id: find
+        run: |
+          SETTINGS=$(find . \( -name settings.gradle.kts -o -name settings.gradle \) -not -path "./.git/*" | head -n 1)
+          if [ -z "$SETTINGS" ]; then
+            echo "::error::No settings.gradle.kts found and no .zip to unpack. Repo contents:"
+            find . -maxdepth 2 -not -path "./.git/*" | head -50
+            exit 1
+          fi
+          echo "dir=$(dirname "$SETTINGS")" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools platforms;android-36.1 build-tools;36.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.3.1"
+
+      - name: Create debug keystore
+        working-directory: ${{ steps.find.outputs.dir }}
+        run: |
+          keytool -genkeypair -v \
+            -keystore debug.keystore \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Build debug APK
+        working-directory: ${{ steps.find.outputs.dir }}
+        run: gradle assembleDebug --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-plant-guardian-apk
+          path: "**/build/outputs/apk/debug/*.apk"
+          if-no-files-found: error
